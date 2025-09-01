@@ -1,15 +1,17 @@
 <?php
 session_start();
 
-// Подключаем класс логирования
+// Подключаем конфигурацию и класс логирования
+require_once 'config.php';
 require_once 'Logger.php';
+
 $logger = new Logger();
 
 // Обработка удаления файла
 if (isset($_GET['delete']) && isset($_GET['folder'])) {
     $file = $_GET['delete'];
     $folder = $_GET['folder'];
-    $filePath = 'output/' . $folder . '/' . $file;
+    $filePath = getFullPath($folder) . $file;
     
     if (file_exists($filePath) && unlink($filePath)) {
         $_SESSION['message'] = "Файл '$file' успешно удален";
@@ -29,26 +31,57 @@ if (isset($_GET['delete']) && isset($_GET['folder'])) {
     exit;
 }
 
-// Получаем список папок и файлов
+// Получаем список папок и файлов из сетевого каталога с подпапками
 $folders = [];
-$outputDir = 'output/';
+$basePath = getNetworkPath() . OUTPUT_FOLDER_NAME;
 
-if (is_dir($outputDir)) {
-    $items = scandir($outputDir);
+if (is_dir($basePath)) {
+    $items = scandir($basePath);
     foreach ($items as $item) {
-        if ($item !== '.' && $item !== '..' && is_dir($outputDir . $item)) {
+        if ($item !== '.' && $item !== '..' && is_dir($basePath . DIRECTORY_SEPARATOR . $item)) {
+            $folderPath = $basePath . DIRECTORY_SEPARATOR . $item . DIRECTORY_SEPARATOR;
+            
+            // Основная папка - ищем файлы в подпапке files
             $folders[$item] = [];
-            $folderPath = $outputDir . $item . '/';
+            $uploadSubfolderPath = $folderPath . DIRECTORY_SEPARATOR . UPLOAD_SUBFOLDER;
+            if (is_dir($uploadSubfolderPath)) {
+                $files = scandir($uploadSubfolderPath);
+                foreach ($files as $file) {
+                    if ($file !== '.' && $file !== '..' && is_file($uploadSubfolderPath . DIRECTORY_SEPARATOR . $file)) {
+                        $fileInfo = [
+                            'name' => $file,
+                            'size' => filesize($uploadSubfolderPath . DIRECTORY_SEPARATOR . $file),
+                            'modified' => filemtime($uploadSubfolderPath . DIRECTORY_SEPARATOR . $file),
+                            'path' => $uploadSubfolderPath . DIRECTORY_SEPARATOR . $file
+                        ];
+                        $folders[$item][] = $fileInfo;
+                    }
+                }
+            }
+            
+            // Подпапки - ищем файлы в подпапке files
             $files = scandir($folderPath);
-            foreach ($files as $file) {
-                if ($file !== '.' && $file !== '..' && is_file($folderPath . $file)) {
-                    $fileInfo = [
-                        'name' => $file,
-                        'size' => filesize($folderPath . $file),
-                        'modified' => filemtime($folderPath . $file),
-                        'path' => $folderPath . $file
-                    ];
-                    $folders[$item][] = $fileInfo;
+            foreach ($files as $subItem) {
+                if ($subItem !== '.' && $subItem !== '..' && is_dir($folderPath . $subItem)) {
+                    $subFolderPath = $folderPath . $subItem . DIRECTORY_SEPARATOR;
+                    $subFolderKey = $item . DIRECTORY_SEPARATOR . $subItem;
+                    $folders[$subFolderKey] = [];
+                    
+                    $uploadSubfolderPath = $subFolderPath . UPLOAD_SUBFOLDER;
+                    if (is_dir($uploadSubfolderPath)) {
+                        $subFiles = scandir($uploadSubfolderPath);
+                        foreach ($subFiles as $file) {
+                            if ($file !== '.' && $file !== '..' && is_file($uploadSubfolderPath . DIRECTORY_SEPARATOR . $file)) {
+                                $fileInfo = [
+                                    'name' => $file,
+                                    'size' => filesize($uploadSubfolderPath . DIRECTORY_SEPARATOR . $file),
+                                    'modified' => filemtime($uploadSubfolderPath . DIRECTORY_SEPARATOR . $file),
+                                    'path' => $uploadSubfolderPath . DIRECTORY_SEPARATOR . $file
+                                ];
+                                $folders[$subFolderKey][] = $fileInfo;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -281,10 +314,19 @@ function getFileIcon($filename) {
                                     <div class="folder-header">
                                         <div class="d-flex justify-content-between align-items-center">
                                             <div>
-                                                <h5 class="mb-0">
-                                                    <i class="fas fa-folder me-2"></i>
-                                                    <?php echo htmlspecialchars($folderName); ?>
-                                                </h5>
+                                                                                                 <h5 class="mb-0">
+                                                     <?php if (strpos($folderName, DIRECTORY_SEPARATOR) !== false): ?>
+                                                         <i class="fas fa-folder-open me-2"></i>
+                                                         <i class="fas fa-level-down-alt me-1 text-muted"></i>
+                                                         <?php 
+                                                         $parts = explode(DIRECTORY_SEPARATOR, $folderName);
+                                                         echo htmlspecialchars($parts[0]) . ' / ' . htmlspecialchars($parts[1]) . ' / ' . UPLOAD_SUBFOLDER;
+                                                         ?>
+                                                     <?php else: ?>
+                                                         <i class="fas fa-folder me-2"></i>
+                                                         <?php echo htmlspecialchars($folderName) . ' / ' . UPLOAD_SUBFOLDER; ?>
+                                                     <?php endif; ?>
+                                                 </h5>
                                                 <small>
                                                     <?php echo count($files); ?> файлов
                                                     <?php 

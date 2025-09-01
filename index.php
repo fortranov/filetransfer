@@ -1,19 +1,29 @@
 <?php
 session_start();
 
-// Подключаем класс логирования
+// Подключаем конфигурацию и класс логирования
+require_once 'config.php';
 require_once 'Logger.php';
+
+// Проверяем доступность сетевого пути
+$networkAvailable = checkNetworkPath();
+$networkPermissions = checkNetworkPermissions();
+
 $logger = new Logger();
 
 // Обработка загрузки файла
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['file']) && isset($_POST['folder'])) {
-    $uploadDir = 'output/';
     $selectedFolder = $_POST['folder'];
-    $targetDir = $uploadDir . $selectedFolder . '/';
+    $targetDir = getFullPath($selectedFolder);
     
     // Создаем папку если её нет
     if (!is_dir($targetDir)) {
-        mkdir($targetDir, 0755, true);
+        if (!@mkdir($targetDir, 0755, true)) {
+            $_SESSION['message'] = "Ошибка: Не удалось создать папку в сетевом каталоге";
+            $_SESSION['message_type'] = 'error';
+            header('Location: index.php');
+            exit;
+        }
     }
     
     $file = $_FILES['file'];
@@ -23,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['file']) && isset($_P
     // Проверяем, что файл был загружен
     if ($file['error'] === UPLOAD_ERR_OK) {
         // Проверяем расширение файла
-        $allowedExtensions = ['pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'xls', 'xlsx'];
+        $allowedExtensions = ALLOWED_EXTENSIONS;
         $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
         
         if (in_array($fileExtension, $allowedExtensions)) {
@@ -59,22 +69,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['file']) && isset($_P
     exit;
 }
 
-// Получаем список папок
-$folders = [];
-$outputDir = 'output/';
-if (is_dir($outputDir)) {
-    $items = scandir($outputDir);
-    foreach ($items as $item) {
-        if ($item !== '.' && $item !== '..' && is_dir($outputDir . $item)) {
-            $folders[] = $item;
-        }
-    }
-}
+// Получаем список папок из сетевого каталога с подпапками
+$folders = getNetworkFolders();
 
-// Создаем папку output если её нет
-if (!is_dir($outputDir)) {
-    mkdir($outputDir, 0755, true);
-}
+// Проверяем и создаем необходимые папки
+ensureDirectoriesExist();
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -217,9 +216,13 @@ if (!is_dir($outputDir)) {
                                 <i class="fas fa-folder-open me-2"></i>
                                 Просмотр файлов
                             </a>
-                            <a href="logs.php" class="btn btn-outline-light">
+                            <a href="logs.php" class="btn btn-outline-light me-2">
                                 <i class="fas fa-file-alt me-2"></i>
                                 Просмотр логов
+                            </a>
+                            <a href="setup_network.php" class="btn btn-outline-light">
+                                <i class="fas fa-cog me-2"></i>
+                                Настройка сети
                             </a>
                         </div>
                     </div>
@@ -235,23 +238,78 @@ if (!is_dir($outputDir)) {
                             <?php unset($_SESSION['message'], $_SESSION['message_type']); ?>
                         <?php endif; ?>
                         
-                        <!-- Информация о папках -->
+                        <!-- Информация о сетевом подключении -->
                         <div class="folder-info">
                             <h5 class="mb-2">
-                                <i class="fas fa-folder-open me-2"></i>
-                                Доступные папки
+                                <i class="fas fa-network-wired me-2"></i>
+                                Состояние сетевого подключения
                             </h5>
-                            <?php if (empty($folders)): ?>
-                                <p class="mb-0 text-muted">Папки будут созданы автоматически при первой загрузке</p>
-                            <?php else: ?>
-                                <p class="mb-0">
-                                    <strong>Найдено папок:</strong> <?php echo count($folders); ?>
-                                    <br>
-                                    <small class="text-muted">
-                                        <?php echo implode(', ', $folders); ?>
-                                    </small>
-                                </p>
-                            <?php endif; ?>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <p class="mb-1">
+                                        <strong>Сетевой путь:</strong> 
+                                        <span class="text-muted"><?php echo htmlspecialchars(NETWORK_PATH); ?></span>
+                                    </p>
+                                    <p class="mb-1">
+                                        <strong>Доступность:</strong> 
+                                        <?php if ($networkAvailable): ?>
+                                            <span class="text-success">
+                                                <i class="fas fa-check-circle me-1"></i>Доступен
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="text-danger">
+                                                <i class="fas fa-times-circle me-1"></i>Недоступен
+                                            </span>
+                                        <?php endif; ?>
+                                    </p>
+                                    <p class="mb-1">
+                                        <strong>Права доступа:</strong> 
+                                        <?php if ($networkPermissions): ?>
+                                            <span class="text-success">
+                                                <i class="fas fa-check-circle me-1"></i>Есть
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="text-danger">
+                                                <i class="fas fa-times-circle me-1"></i>Нет
+                                            </span>
+                                        <?php endif; ?>
+                                    </p>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6 class="mb-2">
+                                        <i class="fas fa-folder-open me-2"></i>
+                                        Доступные папки
+                                    </h6>
+                                    <?php if (empty($folders)): ?>
+                                        <p class="mb-0 text-muted">Папки будут созданы автоматически при первой загрузке</p>
+                                    <?php else: ?>
+                                        <p class="mb-0">
+                                            <strong>Найдено папок:</strong> 
+                                            <?php 
+                                            $totalFolders = 0;
+                                            foreach ($folders as $folder) {
+                                                $totalFolders++;
+                                                $totalFolders += count($folder['subfolders']);
+                                            }
+                                            echo $totalFolders;
+                                            ?>
+                                            <br>
+                                                                                         <small class="text-muted">
+                                                 <?php 
+                                                 $folderNames = [];
+                                                 foreach ($folders as $folder) {
+                                                     $folderNames[] = $folder['name'] . '/' . UPLOAD_SUBFOLDER;
+                                                     foreach ($folder['subfolders'] as $subfolder) {
+                                                         $folderNames[] = $folder['name'] . '/' . $subfolder['name'] . '/' . UPLOAD_SUBFOLDER;
+                                                     }
+                                                 }
+                                                 echo implode(', ', $folderNames);
+                                                 ?>
+                                             </small>
+                                        </p>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                         </div>
                         
                         <!-- Форма загрузки -->
@@ -283,9 +341,16 @@ if (!is_dir($outputDir)) {
                                     <select name="folder" id="folder" class="form-select" required>
                                         <option value="">Выберите папку...</option>
                                         <?php foreach ($folders as $folder): ?>
-                                            <option value="<?php echo htmlspecialchars($folder); ?>">
-                                                <?php echo htmlspecialchars($folder); ?>
-                                            </option>
+                                                                                         <optgroup label="<?php echo htmlspecialchars($folder['name']); ?>">
+                                                 <option value="<?php echo htmlspecialchars($folder['path']); ?>">
+                                                     📁 <?php echo htmlspecialchars($folder['name']); ?> → 📂 <?php echo UPLOAD_SUBFOLDER; ?>
+                                                 </option>
+                                                 <?php foreach ($folder['subfolders'] as $subfolder): ?>
+                                                     <option value="<?php echo htmlspecialchars($subfolder['path']); ?>">
+                                                         &nbsp;&nbsp;&nbsp;&nbsp;📂 <?php echo htmlspecialchars($subfolder['name']); ?> → 📂 <?php echo UPLOAD_SUBFOLDER; ?>
+                                                     </option>
+                                                 <?php endforeach; ?>
+                                             </optgroup>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>

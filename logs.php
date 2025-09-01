@@ -1,7 +1,8 @@
 <?php
 session_start();
 
-// Подключаем класс логирования
+// Подключаем конфигурацию и класс логирования
+require_once 'config.php';
 require_once 'Logger.php';
 $logger = new Logger();
 

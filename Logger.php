@@ -2,12 +2,17 @@
 /**
  * Класс для логирования операций загрузки файлов
  */
+require_once 'config.php';
+
 class Logger {
-    private $logsDir = 'logs/';
-    private $maxFileSize = 10485760; // 10MB в байтах
+    private $logsDir;
+    private $maxFileSize;
     private $currentLogFile = null;
     
     public function __construct() {
+        $this->logsDir = LOGS_DIR;
+        $this->maxFileSize = MAX_LOG_FILE_SIZE;
+        
         // Создаем папку для логов если её нет
         if (!is_dir($this->logsDir)) {
             mkdir($this->logsDir, 0755, true);
